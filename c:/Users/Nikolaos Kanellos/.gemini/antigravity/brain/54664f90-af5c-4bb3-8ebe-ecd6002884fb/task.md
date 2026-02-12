@@ -1,0 +1,9 @@
+    - [x] Add Menu Button to Home Hero
+- [x] Deployment <!-- id: 11 -->
+    - [x] Initialize GitHub Repository
+    - [x] Push Codebase to `kanellosnikosg2008-hash/site`
+    - [x] Fix Vercel Build (Add `public/` structure)
+- [x] Optimization & Mobile Fixes <!-- id: 12 -->
+    - [x] Implement Subsampling for Animation on Mobile
+    - [x] Add Loading Spinner
+    - [x] Refine Mobile Typography

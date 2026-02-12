@@ -1,54 +1,93 @@
-'use client';
+"use client";
 
 import { useEffect, useRef, useState } from 'react';
-import { useScroll, useTransform, useSpring, motion } from 'framer-motion';
-import { clsx } from 'clsx';
-import { twMerge } from 'tailwind-merge';
+import { motion, useScroll, useTransform, useSpring } from 'framer-motion';
 
-const FRAME_COUNT = 192;
+const FRAME_COUNT = 192; // Total number of frames in the sequence
 
 export default function CoffeeCanvas() {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const [images, setImages] = useState<HTMLImageElement[]>([]);
     const [isLoaded, setIsLoaded] = useState(false);
-
     const { scrollYProgress } = useScroll();
 
-    // Smooth the scroll progress for a "heavy" feel
+    // Smooth out the scroll progress
     const smoothProgress = useSpring(scrollYProgress, {
-        stiffness: 80,
-        damping: 40,
+        stiffness: 100,
+        damping: 30, // Higher damping = less rubber banding
         restDelta: 0.001
     });
 
-    // Map progress (0-1) to frame index (0-191)
+    // Map scroll progress (0 to 1) to frame index (0 to FRAME_COUNT - 1)
+    // We use a transform that outputs a float, so we can interpolate or floor it
     const currentFrame = useTransform(smoothProgress, [0, 1], [0, FRAME_COUNT - 1]);
 
+    // Handle Resize with DPI awareness
+    useEffect(() => {
+        const handleResize = () => {
+            if (canvasRef.current) {
+                const dpr = window.devicePixelRatio || 1;
+                // Set physical size
+                canvasRef.current.width = window.innerWidth * dpr;
+                canvasRef.current.height = window.innerHeight * dpr;
+            }
+        };
+
+        window.addEventListener('resize', handleResize);
+        handleResize(); // Initial size
+
+        return () => window.removeEventListener('resize', handleResize);
+    }, []);
+
+    // Loading Logic with Mobile Optimization
     useEffect(() => {
         const loadImages = async () => {
-            const loadedImages: HTMLImageElement[] = [];
+            const isMobile = window.innerWidth < 768;
+            const step = isMobile ? 2 : 1; // Skip every other frame on mobile to save bandwidth/memory
+            
+            const loadedImages: (HTMLImageElement | null)[] = new Array(FRAME_COUNT).fill(null);
+            let loadedCount = 0;
+            const totalToLoad = Math.ceil(FRAME_COUNT / step);
+
             const promises = [];
 
-            for (let i = 1; i <= FRAME_COUNT; i++) {
+            for (let i = 1; i <= FRAME_COUNT; i += step) {
                 const promise = new Promise<void>((resolve) => {
                     const img = new Image();
-                    // Pad with zeros: frame_001.jpg, etc.
                     const paddedIndex = i.toString().padStart(3, '0');
                     img.src = `/sequence/frame_${paddedIndex}.jpg`;
+                    
                     img.onload = () => {
                         loadedImages[i - 1] = img;
+                        loadedCount++;
+                        // Optional: Update a progress state here if we wanted to show %
                         resolve();
                     };
                     img.onerror = () => {
                         console.error(`Failed to load frame ${i}`);
-                        resolve(); // Resolve anyway to avoid blocking
+                        resolve(); 
                     };
                 });
                 promises.push(promise);
             }
 
             await Promise.all(promises);
-            setImages(loadedImages);
+            
+            // Fill gaps for skipped frames (reuse previous frame)
+            if (step > 1) {
+                for (let i = 0; i < FRAME_COUNT; i++) {
+                     if (!loadedImages[i]) {
+                         // Find nearest previous encoded frame
+                         let prev = i - 1;
+                         while (prev >= 0 && !loadedImages[prev]) {
+                             prev--;
+                         }
+                         if (prev >= 0) loadedImages[i] = loadedImages[prev];
+                     }
+                }
+            }
+
+            setImages(loadedImages as HTMLImageElement[]); // Cast ensuring we filled gaps
             setIsLoaded(true);
         };
 
@@ -74,16 +113,9 @@ export default function CoffeeCanvas() {
 
                 // Calculate scaling - USE 'CONTAIN' logic (Math.min) instead of 'COVER' (Math.max)
                 // This ensures the entire image (text + cup) is visible
-                // We divide by dpr because the canvas dimensions are scaled up by dpr
-                // but we want to calculate scaling relative to the logical CSS pixels? 
-                // Actually, canvas.width is now physical pixels. image.width is natural pixels.
-
                 const hRatio = canvas.width / image.width;
                 const vRatio = canvas.height / image.height;
-
-                // Use MAX ratio to ensure image fills screen (Cover)
-                // This removes black bars but may crop edges depending on aspect ratio
-                const ratio = Math.max(hRatio, vRatio);
+                const ratio = Math.max(hRatio, vRatio); // Use MAX ratio to ensure image fills screen (Cover)
 
                 const centerShift_x = (canvas.width - image.width * ratio) / 2;
                 const centerShift_y = (canvas.height - image.height * ratio) / 2;
@@ -114,50 +146,29 @@ export default function CoffeeCanvas() {
         }
     }, [isLoaded, currentFrame, images]);
 
-    // Handle Resize with DPI awareness
-    useEffect(() => {
-        const handleResize = () => {
-            if (canvasRef.current) {
-                const dpr = window.devicePixelRatio || 1;
-                // Set physical size
-                canvasRef.current.width = window.innerWidth * dpr;
-                canvasRef.current.height = window.innerHeight * dpr;
-
-                // Reset scale? No, just drawImage with correct coords works easier for simple blits.
-                // But scaling the context helps if we used logical coords. 
-                // Here we calculated ratio based on canvas.width (physical), so no ctx.scale needed 
-                // IF we treat drawing coords as physical. 
-            }
-        };
-
-        window.addEventListener('resize', handleResize);
-        handleResize(); // Initial size
-
-        return () => window.removeEventListener('resize', handleResize);
-    }, []);
-
     return (
         <div className="fixed inset-0 z-0 bg-obsidian pointer-events-none">
             <canvas
                 ref={canvasRef}
-                className="w-full h-full object-cover opacity-80" // Slight opacity to blend with black bg
+                className="w-full h-full object-cover opacity-80" 
             />
 
-            {/* 1. Cinematic Vignette (Darkens edges heavily to hide artifacts) */}
+            {/* 1. Cinematic Vignette */}
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_0%,#0A0A0A_90%)]" />
 
-            {/* 2. Film Grain Overlay (Adds texture to mask blockiness) */}
+            {/* 2. Film Grain Overlay */}
             <div className="absolute inset-0 bg-noise opacity-[0.08] mix-blend-overlay" />
 
-            {/* 3. Velvet Color Grade (Red wash) */}
+            {/* 3. Velvet Color Grade */}
             <div className="absolute inset-0 bg-gradient-to-b from-black/20 via-transparent to-passion/10 mix-blend-color-dodge" />
 
-            {/* 4. Floating Embers / Particles (Distraction) */}
+            {/* 4. Floating Embers */}
             <Particles />
 
             {!isLoaded && (
-                <div className="absolute inset-0 flex items-center justify-center text-white/50">
-                    Loading Aroma...
+                <div className="absolute inset-0 flex flex-col items-center justify-center text-white/50 bg-obsidian z-50">
+                   <div className="w-16 h-16 border-4 border-passion/30 border-t-passion rounded-full animate-spin mb-4" />
+                   <p className="font-serif tracking-widest text-sm animate-pulse">PREPARING AROMA...</p>
                 </div>
             )}
         </div>
